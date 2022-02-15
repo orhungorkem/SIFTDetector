@@ -8,6 +8,8 @@ bin-release/
 .settings/
 videos/
 data/
+descriptors/
+matches/
 
 # Executables
 *.swf
