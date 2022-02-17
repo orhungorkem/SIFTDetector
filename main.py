@@ -263,6 +263,8 @@ def detectAngle(angles1, angles2):
 # Matching results are written to a csv file. 
 def writeMatches(frame_no, no_of_frames, matches, matched, angle, first, dumpfile):
 
+    if not os.path.exists("./matches"):
+        os.mkdir("./matches")
 
     total_matches = sum(matches)
     max_match = matches[matched]
