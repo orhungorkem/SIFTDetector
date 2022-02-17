@@ -9,7 +9,6 @@ bin-release/
 videos/
 data/
 descriptors/
-matches/
 
 # Executables
 *.swf

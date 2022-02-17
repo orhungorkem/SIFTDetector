@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import json
 from scipy.spatial.distance import cdist
+import os
 
 
 
@@ -114,6 +115,9 @@ def captureDescriptors(path, fps, interval, folder_to_save, no_of_descriptors=15
   
         count += 1
     
+    if not os.path.exists("./descriptors/"+folder_to_save):
+        os.mkdir("./descriptors/"+folder_to_save)
+
     np.save("./descriptors/"+folder_to_save+"/angles", all_angles)
     np.save("./descriptors/"+folder_to_save+"/descriptors", all_desc)
     with open('./descriptors/'+folder_to_save+'/address.json', 'w') as fp:
@@ -282,8 +286,8 @@ def writeMatches(frame_no, no_of_frames, matches, matched, angle, first, dumpfil
 
 
 
-
-folder = "white430"
+# folder name of the run, will appear under matches directory
+folder = "whitesquares"
 
 # parameters of captureDescriptors()
 train_video = "./videos/karolar_2.mov"
@@ -303,7 +307,7 @@ ratio = 0.75
 train = True
 
 
-test = True
+test = False
 
 
 
@@ -322,10 +326,10 @@ if test:
         ang = np.load(f,allow_pickle=True)   
 
     analyzeFrames(path = query_video, interval = query_interval, desc = desc, sq = sq, ang = ang, no_of_descriptors = query_descriptors, 
-                    fps = query_fps, folder = './matches/'+folder+'75.csv', ratio = ratio)
+                    fps = query_fps, folder = './matches/'+folder+'.csv', ratio = ratio)
 
-    df = pd.read_pickle("./matches/"+folder+"75.csv")
-    df.to_csv("./matches/"+folder+"75.csv")
+    df = pd.read_pickle("./matches/"+folder+".csv")
+    df.to_csv("./matches/"+folder+".csv")
 
 
 
