@@ -1,18 +1,12 @@
 import cv2
 import numpy as np
 import pandas as pd
-import math
 import json
 from scipy.spatial.distance import cdist
-from scipy.spatial import distance_matrix
-import time
 
 
-# TODO
-# * knn de k parametresiyle oyna
-# dbscan bak
-# eşlenen imageların princial orientationlarını da almalıyız. buna bak
 
+# Get fps of given video
 def getFps(path):
 
     vidObj = cv2.VideoCapture(path)
@@ -22,7 +16,7 @@ def getFps(path):
     return int(fps)
 
 
-
+# Given the path to video, the fps and the second of needed frame, it returns the frame in jpg format ( needed for testing and trials )
 def saveFrame(path, fps, frame_no):
 
     # Path to video file
@@ -52,10 +46,24 @@ def saveFrame(path, fps, frame_no):
     
 
 
-# given video, fps, interval, it returns the descriptors from frames, the mapping of frames, 
-# and the angle of each keypoint by a referance 
-# interval is an array of start and end time in seconds ([0,420] for first 7 min)
-def captureDescriptors(path, fps, interval, no_of_descriptors, folder_to_save):
+
+
+# Path: Path to the video to capture descriptors
+# Fps: Fps of the video
+# Interval: Array with two elements that indicate the start and end time of video to capture ([0,420] for first 7 min)
+# No_of_descriptors: SIFT captures many descriptors most of which are unnecessary. This parameter determines the number of descriptors to capture with biggest blobs. 
+# Can be reduced to some extent with efficiency concerns.
+# Folder_to_save: Descriptors are saved to a subfolder under ./descriptors. Name of the subfolder should be given. 
+# Function saves 3 files:
+# * address.json: Mapping of descriptors to frames  ({"352":2} means descriptor in 352. row is the first descriptor of frame 2)
+# * descriptors.npy: A 2d numpy array where each row is a descriptor (which is a 128 byte array). Each frame has no_of_descriptors rows in this array.
+# * angles.npy: A 2d array that keeps principle angle of each keypoint in a frame in each row. 
+# (Each row has no_of_descriptors elements since there are no_of_descriptors keypoints for each frame. And there are as many rows as the number of frames captured.)
+# Ex. interval = [20,40] and no_of_descriptors = 150
+# Then the frames between 20. and 40. seconds of the given video are analyzed. 
+# descriptors.npy will have the shape (150*20, 128) since each row is a descriptor and total number of descriptors is 150*20
+# angles.npy will have the shape (20,150) since each row is a frame and each descriptor is a column
+def captureDescriptors(path, fps, interval, folder_to_save, no_of_descriptors=150):
 
     # Path to video file
     vidObj = cv2.VideoCapture(path)
@@ -106,9 +114,9 @@ def captureDescriptors(path, fps, interval, no_of_descriptors, folder_to_save):
   
         count += 1
     
-    np.save("./"+folder_to_save+"/angles", all_angles)
-    np.save("./"+folder_to_save+"/descriptors", all_desc)
-    with open('./'+folder_to_save+'/address.json', 'w') as fp:
+    np.save("./descriptors/"+folder_to_save+"/angles", all_angles)
+    np.save("./descriptors/"+folder_to_save+"/descriptors", all_desc)
+    with open('./descriptors/'+folder_to_save+'/address.json', 'w') as fp:
         json.dump(frame_address, fp)
     print("Features saved")
         
@@ -116,8 +124,21 @@ def captureDescriptors(path, fps, interval, no_of_descriptors, folder_to_save):
 
 
 
-
-def analyzeFrames(path, interval, desc, sq, ang, no_of_descriptors, fps, dumpfile):
+# Path: Path to the video to analyze
+# Fps: Fps of the video
+# Interval: Array with two elements that indicate the start and end time of video to analyze ([420,840] between 7. and 14. mins)
+# No_of_descriptors: SIFT captures many descriptors most of which are unnecessary. This parameter determines the number of descriptors to capture with biggest blobs
+# Desc: descriptors.npy which is obtained by captureDescriptors()
+# Sq: address.json which is obtained by captureDescriptors()
+# Ang: angles.npy which is obtained by captureDescriptors()
+# Ratio: When a descriptor is compared to a set of descriptors, we call the most similar pair a "match". 
+# To call it a "good match", we need that the distance of the match must me smaller than a ratio of the second best match. 
+# If ratio = 0.7, distances of first two matches are d1 and d2, the match with distance of d1 is a good match if d1 < 0.7*d2. 
+# We only count the good matches, thus ratio is an important parameter.
+# Dumpfile: The file to write the matching results. (need to be a .csv)
+# Function reads the given interval of the video, extracts the SIFT features of each frame, then compares the features with the ones in database. 
+# For our case, the database is given with desc, sq, ang. This can be changed. With the comparison, match results are written to a .csv file.
+def analyzeFrames(path, interval, desc, sq, ang, no_of_descriptors, fps, dumpfile, ratio = 0.75):
 
     # Path to video file
     vidObj = cv2.VideoCapture(path)
@@ -152,7 +173,7 @@ def analyzeFrames(path, interval, desc, sq, ang, no_of_descriptors, fps, dumpfil
             angles = [int(key.angle) for key in new_keypoints]
             d = np.array(cdist(new_descriptors, desc))
             
-            matches, matched, glob_match = getMatchFromDistance(sq, d)
+            matches, matched, glob_match = getMatchFromDistance(sq, d, ratio)
             startidx = 0
             for key, value in sq.items():
                 if value == matched:
@@ -169,7 +190,7 @@ def analyzeFrames(path, interval, desc, sq, ang, no_of_descriptors, fps, dumpfil
                     angle2 = ang[matched][idx]
                     matched_ang1.append(angle1)
                     matched_ang2.append(angle2)
-            angle, _ = detectAngle(matched_ang1, matched_ang2)  #second parameter may be necessary to show  success prob. of prediction
+            angle, _ = detectAngle(matched_ang1, matched_ang2) 
             writeMatches(frame_no, len(sq), matches, matched, angle, first, dumpfile)
             if first:
                 first = False
@@ -180,8 +201,15 @@ def analyzeFrames(path, interval, desc, sq, ang, no_of_descriptors, fps, dumpfil
 
     
 
-
-def getMatchFromDistance(sq, d):
+# d: The distance matrix between descriptors of a frame and the set of descriptors in the database. 
+# Shape of d is (n,m) if current frame has n descriptors and there are m descriptors in database. 
+# d_ij = Distance between the ith descriptor of the frame and jth descriptor in the database. 
+# Function returns 3 things: 
+# * matches: An array that counts the number of matches between the current frame and each of the frames in database.
+# * matched: argmax(matches) , the frame that is the best match of the current frame (test frame) 
+# * glob_match: An array of tuples where each element (i,j) is a pair of indices of matched descriptors. 
+# (i,j) means that ith descriptor of test frame is matched with jth descriptor in database. We get this to find relative angles.   
+def getMatchFromDistance(sq, d, ratio):
     rows, _ = d.shape   
     matches = [0 for _ in range(len(sq))]
     indices = []
@@ -189,11 +217,11 @@ def getMatchFromDistance(sq, d):
     for i in range(rows):
         row = d[i]
         min1, min2 = np.partition(row, 1)[0:2]
-        if min1 < 0.75*min2:
+        if min1 < ratio*min2:
             # means this is a good match
             idx = np.where(row == min1)[0][0]
-            indices.append(idx) #keeps the good match idnices, these will be mapped to squares
-            glob_match.append((i,idx))   # we get this because we want to know the index in all_desc that corresponds to index in new_desc
+            indices.append(idx) 
+            glob_match.append((i,idx))   
     for idx in indices:
         last = '0'
         for k in sq:
@@ -213,6 +241,9 @@ def getMatchFromDistance(sq, d):
 
 
 # http://amroamroamro.github.io/mexopencv/matlab/cv.SIFT.detectAndCompute.html
+# Gets two arrays of angles to compare. Arrays have one to one correspondence. That is, ith elements of both arrays belong to matched keypoints. 
+# Difference between each corresponding pair of angles is calculated. 
+# The most common difference is inferred to be the relative angle between test frame and matched database frame.
 def detectAngle(angles1, angles2):
 
     counter = np.array([0 for i in range(360) ])
@@ -225,7 +256,7 @@ def detectAngle(angles1, angles2):
 
 
     
-
+# Matching results are written to a csv file. 
 def writeMatches(frame_no, no_of_frames, matches, matched, angle, first, dumpfile):
 
 
@@ -252,32 +283,49 @@ def writeMatches(frame_no, no_of_frames, matches, matched, angle, first, dumpfil
 
 
 
-folder = "train_long"
+folder = "white430"
+
+# parameters of captureDescriptors()
+train_video = "./videos/karolar_2.mov"
+train_fps = 30
+train_interval = [0,430]
+train_descriptors = 150 
+
+# parameters of analyzeFrames()
+query_video = "./videos/karolar_2.mov"
+query_fps = 30
+query_interval = [430,1320]
+query_descriptors = 150
+ratio = 0.75
+
+
+# make it false if the descriptors in the database are being used
 train = True
 
-if train:
-    captureDescriptors("./videos/karolar_2.mov",30,[0,1350],150, folder_to_save = folder)
 
 test = True
 
 
 
-with open('./'+folder+'/address.json', 'r') as fp:
-    sq = json.load(fp)
+if train:
+    captureDescriptors(path = train_video,fps = train_fps, interval = train_interval, folder_to_save = folder, no_of_descriptors = train_descriptors)
 
-with open('./'+folder+'/descriptors.npy', 'rb') as f:
-    desc = np.load(f)
-with open('./'+folder+'/angles.npy', 'rb') as f:
-    ang = np.load(f,allow_pickle=True)   #keeps the angles of keypoints for each saved frame
+
 
 
 if test:
-    analyzeFrames("./videos/query.mov",[0,58],desc,sq,ang,150,30,'./'+folder+'/matches.csv')
+    with open('./descriptors/'+folder+'/address.json', 'r') as fp:
+        sq = json.load(fp)
+    with open('./descriptors/'+folder+'/descriptors.npy', 'rb') as f:
+        desc = np.load(f)
+    with open('./descriptors/'+folder+'/angles.npy', 'rb') as f:
+        ang = np.load(f,allow_pickle=True)   
 
-    df = pd.read_pickle("./"+folder+"/matches.csv")
-    df.to_csv("./"+folder+"/matches.csv")
+    analyzeFrames(path = query_video, interval = query_interval, desc = desc, sq = sq, ang = ang, no_of_descriptors = query_descriptors, 
+                    fps = query_fps, folder = './matches/'+folder+'75.csv', ratio = ratio)
+
+    df = pd.read_pickle("./matches/"+folder+"75.csv")
+    df.to_csv("./matches/"+folder+"75.csv")
 
 
 
-
-# açıyı tam float tutarlı alır mıyız
